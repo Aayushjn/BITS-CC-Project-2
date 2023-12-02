@@ -7,6 +7,9 @@ import java.nio.charset.Charset
 import java.util.*
 
 
+/**
+ * Handles routing duties for consistent hashing across dynamically changing nodes
+ */
 class ConsistentHashRouter<T : Node>(
     physicalNodes: Collection<T>,
     virtualNodeCount: Int = DEFAULT_VNODE_COUNT,
@@ -55,6 +58,9 @@ class ConsistentHashRouter<T : Node>(
     companion object {
         const val DEFAULT_VNODE_COUNT = 500
 
+        /**
+         * Default hash function implementation that relies on SipHash for a 2^64 id-space
+         */
         object DefaultHashFunction: HashFunction {
             override fun hash(key: String): Long = Hashing.sipHash24().hashString(
                 key,

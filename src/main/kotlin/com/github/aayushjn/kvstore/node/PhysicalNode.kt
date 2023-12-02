@@ -2,6 +2,10 @@ package com.github.aayushjn.kvstore.node
 
 import java.util.*
 
+/**
+ * Represents a physical node that actually runs on a host and port. Each physical node may have a number of
+ * [VirtualNode]s associated with it
+ */
 data class PhysicalNode(
     val host: String,
     val port: Int,

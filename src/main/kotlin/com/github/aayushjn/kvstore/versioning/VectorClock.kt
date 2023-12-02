@@ -8,6 +8,10 @@ import java.util.TreeMap
 import java.util.TreeSet
 import kotlin.math.max
 
+/**
+ * Represents a vector clock represented as a [TreeMap]. [versionMap] maintains the mapping of each node's vector
+ * timestamp, while [timestamp] is used to maintain wall-clock timing of updates
+ */
 @Serializable(with = VectorClockSerializer::class)
 data class VectorClock(
     @Serializable(with = TreeMapSerializer::class) @SerialName("vectorClock") private var versionMap: TreeMap<Short, Long> = TreeMap(),

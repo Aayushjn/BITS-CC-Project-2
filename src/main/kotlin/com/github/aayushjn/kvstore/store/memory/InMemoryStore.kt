@@ -5,6 +5,9 @@ import com.github.aayushjn.kvstore.versioning.Versioned
 import java.util.concurrent.ConcurrentHashMap
 
 
+/**
+ * An implementation of [Store] that maintains data in-memory. Once the application terminates, all data is lost.
+ */
 class InMemoryStore<K, V>(private val map: MutableMap<K, Versioned<V>> = ConcurrentHashMap()) : Store<K, V>() {
     override operator fun get(key: K): Versioned<V>? = map[key]
 
