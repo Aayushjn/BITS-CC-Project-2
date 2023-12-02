@@ -1,5 +1,7 @@
 package com.github.aayushjn.kvstore.versioning
 
-data class Versioned<T>(@Volatile var data: T, val clock: VectorClock = VectorClock())
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
-inline fun <reified T> T.versioned(clock: VectorClock = VectorClock()) = Versioned(this, clock)
+@Serializable
+data class Versioned<T>(@Volatile var data: T, @SerialName("vectorClock") val clock: VectorClock = VectorClock())

@@ -1,18 +1,28 @@
 package com.github.aayushjn.kvstore.versioning
 
+import com.github.aayushjn.kvstore.serializer.TreeMapSerializer
+import com.github.aayushjn.kvstore.serializer.VectorClockSerializer
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import java.util.TreeMap
 import java.util.TreeSet
 import kotlin.math.max
 
+@Serializable(with = VectorClockSerializer::class)
 data class VectorClock(
-    private var versionMap: TreeMap<Short, Long> = TreeMap(),
+    @Serializable(with = TreeMapSerializer::class) @SerialName("vectorClock") private var versionMap: TreeMap<Short, Long> = TreeMap(),
     @Volatile private var timestamp: Long
 ) : Comparable<VectorClock> {
     constructor() : this(timestamp = System.currentTimeMillis())
 
-    fun increment(node: UShort, time: Long) {
+    fun getVersionMap(): TreeMap<Short, Long> = TreeMap(versionMap)
+
+    operator fun inc(node: UShort): VectorClock = inc(node, System.currentTimeMillis())
+
+    operator fun inc(node: UShort, time: Long): VectorClock {
         timestamp = time
         versionMap.compute(node.toShort()) { _, v -> if (v == null) 1 else v + 1 }
+        return this
     }
 
     fun merge(clock: VectorClock): VectorClock {

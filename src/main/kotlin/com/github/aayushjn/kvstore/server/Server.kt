@@ -2,11 +2,13 @@ package com.github.aayushjn.kvstore.server
 
 import com.github.aayushjn.kvstore.consistenthash.ConsistentHashRouter
 import com.github.aayushjn.kvstore.node.PhysicalNode
+import com.github.aayushjn.kvstore.server.model.*
 import com.github.aayushjn.kvstore.store.memory.InMemoryStore
 import com.github.aayushjn.kvstore.versioning.Versioned
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.java.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.compression.*
 import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
@@ -20,14 +22,17 @@ import io.ktor.server.plugins.callid.*
 import io.ktor.server.plugins.callloging.*
 import io.ktor.server.plugins.compression.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.util.reflect.*
+import kotlin.math.max
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 
-class Server(host: String, port: Int, private val pNodes: MutableList<PhysicalNode>, replicas : Int) {
-    private val node = PhysicalNode(host = host, port = port)
-    private val store = InMemoryStore<String, Any>()
+class Server(pNode: PhysicalNode, private val pNodes: MutableList<PhysicalNode>, replicas : Int) {
+    private val node = pNode
+    private val store = InMemoryStore<String, String>()
     private val router = ConsistentHashRouter(pNodes)
     private val readQuorum : Int = if (replicas / 2 == 0) 1 else replicas / 2
     private val writeQuorum = (replicas + 1) - readQuorum
@@ -37,6 +42,9 @@ class Server(host: String, port: Int, private val pNodes: MutableList<PhysicalNo
             json()
         }
         install(ContentEncoding)
+        defaultRequest {
+            header(HttpHeaders.ContentType, "application/json")
+        }
     }
     private val replicaTracker = hashMapOf<String, MutableList<PhysicalNode>>()
 
@@ -49,6 +57,9 @@ class Server(host: String, port: Int, private val pNodes: MutableList<PhysicalNo
         }
         install(CallLogging)
         install(CallId)
+        install(DefaultHeaders) {
+            header(HttpHeaders.ContentType, "application/json")
+        }
         configureRouting()
     }
 
@@ -61,139 +72,142 @@ class Server(host: String, port: Int, private val pNodes: MutableList<PhysicalNo
     private fun Application.configureRouting() {
         routing {
             get {
-                val data = call.receive<Map<String, Any>>()
-                if ("key" !in data) {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "missing key"))
-                    return@get
-                }
-                val key = data["key"].toString()
+                val req = call.receive<GetRequest>()
                 val isReplica = call.request.queryParameters["isReplica"]?.toBoolean() ?: false
 
-                val value = store[key]
+                val value = store[req.key]
                 if (isReplica) {
-                    if (value.isNotEmpty()) {
-                        call.respond(HttpStatusCode.OK, mapOf(key to value.last()))
-                        return@get
+                    if (value != null) {
+                        call.respond(HttpStatusCode.OK, GetResponse(req.key, value))
                     } else {
-                        call.respond(HttpStatusCode.NotFound)
+                        call.respond(HttpStatusCode.NotFound, ErrorResponse.NotFound())
                     }
+                    return@get
                 }
 
-                val pNode = router.routeNode(key)
+                val pNode = router.routeNode(req.key)
                 if (pNode == null) {
-                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "no physical nodes to route to"))
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse.NoRoute())
                     return@get
                 }
 
                 if (pNode != node) {
                     val resp = client.get(pNode.url) {
-                        setBody(data)
+                        setBody(req)
                     }
-                    call.respond(resp.status, resp.body())
+                    call.respond(resp.status, resp.bodyAsText())
                     return@get
                 }
 
-                val quorumValues = mutableListOf<Versioned<Any>>()
+                if (value == null) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse.NotFound())
+                    return@get
+                }
+                val quorumValues = mutableListOf<Versioned<String>>()
                 var resp: HttpResponse
-                replicaTracker[key]?.forEach { n ->
+                for (n in pNodes.filter { it != node }) {
                     resp = client.get(n.url) {
                         parameter("isReplica", true)
-                        setBody(mapOf("key" to key))
+                        setBody(req)
                     }
                     if (resp.status == HttpStatusCode.OK) {
-                        // TODO: replace with Versioned only
-                        quorumValues.add(resp.body())
+                        quorumValues.add(resp.body<GetResponse<Versioned<String>>>().value)
                     }
-                    if (quorumValues.all { it == value }) {
-                        call.respond(HttpStatusCode.OK, mapOf(key to value))
-                        return@get
-                    } else {
-                        call.respond(HttpStatusCode.InternalServerError)
+                    if (quorumValues.size == readQuorum) {
+                        break
                     }
+                }
+
+                if (quorumValues.all { it.data == value.data }) {
+                    quorumValues.forEach { v -> value.clock.merge(v.clock) }
+                    store[req.key] = value
+                    call.respond(HttpStatusCode.OK, GetResponse(req.key, value))
+                } else {
+                    call.respond(HttpStatusCode.Conflict, ErrorResponse.InconsistentState())
                 }
             }
 
             post {
-                val data = call.receive<Map<String, Any>>()
-                val key = data.keys.first()
+                val req = call.receive<PostRequest<String>>()
                 val isReplica = call.request.queryParameters["isReplica"]?.toBoolean() ?: false
-                val pNode = router.routeNode(key)
+                val pNode = router.routeNode(req.key)
                 if (pNode == null) {
-                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "no physical nodes to route to"))
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse.NoRoute())
                     return@post
                 }
                 if (pNode == node || isReplica) {
-                    val value = store[key].last()
-                    value.data = data.getValue(key)
-                    value.clock.increment(node.getKey().hashCode().toUShort(), System.currentTimeMillis())
-                    store[key] = value
+                    var statusCode = HttpStatusCode.Created
+                    store[req.key] = store[req.key]?.also {
+                        it.data = req.value
+                        it.clock.inc(node.getKey().hashCode().toUShort())
+                        statusCode = HttpStatusCode.NoContent
+                    } ?: Versioned(req.value).also { it.clock.inc(node.getKey().hashCode().toUShort()) }
+
                     if (!isReplica) {
                         var resp: HttpResponse
-                        pNodes.filter { it != node }.shuffled().take(writeQuorum - 1).forEach { tempNode ->
+                        println(pNodes)
+                        pNodes.filter { it != node }.shuffled().take(max(writeQuorum - 1, 1)).forEach { tempNode ->
                             resp = client.post(tempNode.url) {
                                 parameter("isReplica", true)
-                                setBody(data)
+                                setBody(req)
                             }
-                            if (resp.status == HttpStatusCode.Created) {
-                                replicaTracker.compute(key) { _, v ->
+                            if (resp.status == HttpStatusCode.Created || resp.status == HttpStatusCode.NoContent) {
+                                replicaTracker.compute(req.key) { _, v ->
                                     v?.also { it.add(tempNode) } ?: mutableListOf(tempNode)
                                 }
                             } else {
-                                replicaTracker[key]?.forEach { n ->
+                                replicaTracker[req.key]?.forEach { n ->
                                     client.delete(n.url) {
                                         parameter("isReplica", true)
-                                        setBody(mapOf("key" to key))
+                                        setBody(req)
                                     }
                                 }
-                                replicaTracker.remove(key)
-                                call.respond(HttpStatusCode.InternalServerError)
+                                replicaTracker.remove(req.key)
+                                call.respond(HttpStatusCode.InternalServerError, ErrorResponse.InconsistentState())
                                 return@post
                             }
                         }
                     }
-                    call.respond(HttpStatusCode.Created)
+                    call.respond(statusCode)
                     return@post
                 }
                 val resp = client.post(pNode.url) {
-                    setBody(data)
+                    setBody(req)
                 }
-                call.respond(resp.status, resp.body())
+                call.respond(resp.status, resp.bodyAsText())
             }
 
             delete {
-                val data = call.receive<Map<String, Any>>()
+                val req = call.receive<DeleteRequest>()
                 val isReplica = call.request.queryParameters["isReplica"]?.toBoolean() ?: false
-                if ("key" !in data) {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "missing key"))
-                    return@delete
-                }
-                val key = data["key"].toString()
-                val pNode = router.routeNode(key)
+                val pNode = router.routeNode(req.key)
                 if (pNode == null) {
-                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "no physical nodes to route to"))
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse.NoRoute())
                     return@delete
                 }
                 if (pNode == node || isReplica) {
-                    store.delete(key, null)
-
-                    if (!isReplica) {
-                        replicaTracker[key]?.forEach { n ->
-                            client.delete(n.url) {
-                                parameter("isReplica", true)
-                                setBody(mapOf("key" to key))
-                            }
-                        }
-                        replicaTracker.remove(key)
-                        call.respond(HttpStatusCode.InternalServerError)
+                    if (store[req.key] == null) {
+                        call.respond(HttpStatusCode.NotFound, ErrorResponse.NotFound())
                         return@delete
                     }
-                    call.respond(HttpStatusCode.OK)
+                    store.delete(req.key)
+
+                    if (!isReplica) {
+                        replicaTracker[req.key]?.forEach { n ->
+                            client.delete(n.url) {
+                                parameter("isReplica", true)
+                                setBody(req)
+                            }
+                        }
+                        replicaTracker.remove(req.key)
+                    }
+                    call.respond(HttpStatusCode.NoContent)
                     return@delete
                 }
                 val resp = client.delete(pNode.url) {
-                    setBody(data)
+                    setBody(req)
                 }
-                call.respond(resp.status, resp.body())
+                call.respond(resp.status, resp.bodyAsText())
             }
         }
     }

@@ -35,10 +35,10 @@ class App : CliktCommand() {
                 } catch (e: UnknownHostException) {
                     false
                 }
-                val port = if (split.size == 1) 80 else split[1].toInt()
+                val splitPort = if (split.size == 1) 80 else split[1].toInt()
                 require(isValidAddress) { "Invalid address '${split[0]}'" }
-                require(port in 0..65535)
-                PhysicalNode(host = split[0], port = port)
+                require(splitPort in 0..65535)
+                PhysicalNode(host = split[0], port = splitPort)
             }.toMutableList()
         }
         .default(mutableListOf())
@@ -46,13 +46,13 @@ class App : CliktCommand() {
         .int()
         .default(1)
         .help("number of replicas")
-        .check("Replicas are out of range") { it in 1..pNodes.size }
+        .check("Replicas are out of range") { it > 0 }
 
     override fun run() {
-        if(PhysicalNode(host = host, port = port) !in pNodes){
-            pNodes.add(PhysicalNode(host = host, port = port))
-        }
-        val server = Server(host, port, pNodes, replicas)
+        require(replicas <= pNodes.size)
+        val currNode = PhysicalNode(host = host, port = port)
+        pNodes.add(currNode)
+        val server = Server(currNode, pNodes, replicas)
         server.start()
     }
 }
