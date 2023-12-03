@@ -19,9 +19,11 @@ data class VectorClock(
 ) : Comparable<VectorClock> {
     constructor() : this(timestamp = System.currentTimeMillis())
 
-    fun getVersionMap(): TreeMap<Short, Long> = TreeMap(versionMap)
+    fun getVersionMap(): TreeMap<Short, Long> = versionMap
 
     operator fun inc(node: UShort): VectorClock = inc(node, System.currentTimeMillis())
+
+    operator fun dec(node: UShort): VectorClock = dec(node, System.currentTimeMillis())
 
     operator fun inc(node: UShort, time: Long): VectorClock {
         timestamp = time
@@ -29,14 +31,24 @@ data class VectorClock(
         return this
     }
 
-    fun merge(clock: VectorClock): VectorClock {
-        val newClock = VectorClock(versionMap, System.currentTimeMillis())
-        var version: Long?
+    operator fun dec(node: UShort, time: Long): VectorClock {
+        timestamp = time
+        versionMap.compute(node.toShort()) { _, v -> if (v == null) 0 else max(0, v - 1) }
+        return this
+    }
+
+    operator fun plus(clock: VectorClock): VectorClock {
+        val newClock = copy(versionMap = versionMap, timestamp = System.currentTimeMillis())
         for (entry in clock.versionMap.entries) {
-            version = newClock.versionMap[entry.key]
-            newClock.versionMap[entry.key] = (if (version == null) entry.value else max(entry.value, version))
+            newClock.versionMap.compute(entry.key) { _, v -> if (v == null) entry.value else max(entry.value, v) }
         }
         return newClock
+    }
+
+    operator fun plusAssign(clock: VectorClock) {
+        val newClock = plus(clock)
+        versionMap = newClock.versionMap
+        timestamp = newClock.timestamp
     }
 
     override fun compareTo(other: VectorClock): Int {

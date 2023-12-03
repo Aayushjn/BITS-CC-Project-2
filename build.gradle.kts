@@ -1,4 +1,5 @@
 import com.google.cloud.tools.jib.gradle.BuildImageTask
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "1.9.0"
@@ -42,6 +43,14 @@ application {
 tasks {
     test {
         useJUnitPlatform()
+    }
+
+    withType<KotlinCompile> {
+        configureEach {
+            kotlinOptions {
+                freeCompilerArgs += "-Xcontext-receivers"
+            }
+        }
     }
 
     withType<Jar> {

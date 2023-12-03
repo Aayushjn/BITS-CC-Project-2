@@ -1,29 +1,19 @@
 package com.github.aayushjn.kvstore.store.memory
 
 import com.github.aayushjn.kvstore.store.Store
-import com.github.aayushjn.kvstore.versioning.Versioned
 import java.util.concurrent.ConcurrentHashMap
 
 
 /**
  * An implementation of [Store] that maintains data in-memory. Once the application terminates, all data is lost.
  */
-class InMemoryStore<K, V>(private val map: MutableMap<K, Versioned<V>> = ConcurrentHashMap()) : Store<K, V>() {
-    override operator fun get(key: K): Versioned<V>? = map[key]
+class InMemoryStore<K, V>(private val map: MutableMap<K, V> = ConcurrentHashMap()) : Store<K, V>() {
+    override operator fun get(key: K): V? = map[key]
 
-    override fun getAll(keys: Iterable<K>): MutableMap<K, Versioned<V>> = map.toMutableMap()
+    override fun getAll(keys: Iterable<K>): MutableMap<K, V> = map.toMutableMap()
 
     @Synchronized
-    override operator fun set(key: K, value: Versioned<V>) {
-        val current = get(key)
-        if (current == null) {
-            map[key] = value
-            return
-        }
-
-        if (current.clock < value.clock) {
-            throw RuntimeException("Obsolete version for key '$key': ${value.clock}")
-        }
+    override operator fun set(key: K, value: V) {
         map[key] = value
     }
 

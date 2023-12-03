@@ -1,5 +1,6 @@
 package com.github.aayushjn.kvstore.node
 
+import com.github.aayushjn.kvstore.versioning.VectorClock
 import java.util.*
 
 /**
@@ -9,10 +10,15 @@ import java.util.*
 data class PhysicalNode(
     val host: String,
     val port: Int,
+    val clock: VectorClock = VectorClock()
 ) : Node {
     val url = "http://$host:$port"
 
     override fun getKey(): String = "$host:$port"
+
+    fun incrementClock() = clock.inc(getKey().hashCode().toUShort())
+
+    fun decrementClock() = clock.dec(getKey().hashCode().toUShort())
 
     override fun hashCode(): Int = Objects.hash(host, port)
 

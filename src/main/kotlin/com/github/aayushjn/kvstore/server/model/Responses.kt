@@ -1,9 +1,13 @@
 package com.github.aayushjn.kvstore.server.model
 
+import com.github.aayushjn.kvstore.versioning.VectorClock
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GetResponse<T>(val key: String, val value: T)
+data class GetResponse(val key: String, val value: String)
+
+@Serializable
+data class PostResponse(val clocks: Map<Short, VectorClock>, val writeNode: Short)
 
 @Serializable
 sealed class ErrorResponse {
